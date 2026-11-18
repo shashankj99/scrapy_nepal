@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Set
+from collections.abc import Mapping, Sequence, Set
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, TypedDict, cast
 from uuid import uuid4
@@ -27,7 +27,7 @@ class SourceConfig(TypedDict, total=False):
     format: str
     url: str
     hosts: list[str]
-    minimum_rows: int
+    minimum_rows: object
     categories: dict[str, str]
     reuse: str
 
@@ -48,17 +48,21 @@ def load_source(body: bytes, minimum_rows: int, hosts: Set[str]) -> PlaceRows:
 
 
 def validate_records(records: object, minimum_rows: int, hosts: Set[str]) -> PlaceRows:
-    if not isinstance(records, list) or not minimum_rows <= len(records) <= MAX_ROWS:
+    if not isinstance(records, list):
+        raise ImportFailure("unexpected_record_count")
+    items = cast(Sequence[object], records)
+    if not minimum_rows <= len(items) <= MAX_ROWS:
         raise ImportFailure("unexpected_record_count")
     rows: PlaceRows = {}
     rejected = 0
-    for record in records:
+    for record in items:
         try:
             if not isinstance(record, dict):
                 raise ImportFailure("invalid_record")
+            data = cast(Mapping[object, object], record)
             fields: list[str] = []
             for field in FIELDS:
-                value = record.get(field)
+                value = data.get(field)
                 limit = 2048 if field in {"id", "source_url"} else 300
                 if (
                     not isinstance(value, str)

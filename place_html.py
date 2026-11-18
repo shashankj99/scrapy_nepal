@@ -1,8 +1,9 @@
 """Extract Schema.org place records from an approved directory's HTML."""
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from html.parser import HTMLParser
+from typing import cast
 from urllib.parse import urljoin
 
 from crawler import ImportFailure
@@ -30,11 +31,11 @@ class PlaceMarkup(HTMLParser):
 
 def nodes(document: object) -> Iterator[object]:
     if isinstance(document, list):
-        yield from document
+        yield from cast(Sequence[object], document)
     elif isinstance(document, dict):
-        graph = document.get("@graph")
+        graph = cast(Mapping[object, object], document).get("@graph")
         if isinstance(graph, list):
-            yield from graph
+            yield from cast(Sequence[object], graph)
         else:
             yield document
 
@@ -52,10 +53,13 @@ def extract(body: bytes, page: str, categories: Mapping[str, str]) -> list[dict[
         for node in nodes(document):
             if not isinstance(node, dict):
                 continue
-            types = node.get("@type")
-            if isinstance(types, str):
-                types = [types]
-            if not isinstance(types, list):
+            data = cast(Mapping[object, object], node)
+            raw_types = data.get("@type")
+            if isinstance(raw_types, str):
+                types: Sequence[object] = [raw_types]
+            elif isinstance(raw_types, list):
+                types = cast(Sequence[object], raw_types)
+            else:
                 continue
             category = next(
                 (categories[kind] for kind in types if isinstance(kind, str) and kind in categories),
@@ -63,18 +67,22 @@ def extract(body: bytes, page: str, categories: Mapping[str, str]) -> list[dict[
             )
             if category is None:
                 continue
-            url = node.get("url")
+            url = data.get("url")
             if isinstance(url, str) and url:
                 try:
                     url = urljoin(page, url)
                 except ValueError:
                     raise ImportFailure("invalid_place_markup") from None
-            address = node.get("address")
+            address = data.get("address")
+            locality = (
+                cast(Mapping[object, object], address).get("addressLocality")
+                if isinstance(address, dict) else None
+            )
             records.append({
                 "id": url,
-                "name": node.get("name"),
+                "name": data.get("name"),
                 "category": category,
-                "locality": address.get("addressLocality") if isinstance(address, dict) else None,
+                "locality": locality,
                 "source_url": url,
             })
     return records
