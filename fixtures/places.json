@@ -1,0 +1,9 @@
+[
+  {
+    "id": "demo-1",
+    "name": "Example Pub",
+    "category": "pub",
+    "locality": "Thamel",
+    "source_url": "https://example.com/venues/demo-1"
+  }
+]

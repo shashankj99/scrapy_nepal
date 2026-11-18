@@ -1,0 +1,17 @@
+[sources.demo]
+fixture = "fixtures/places.json"
+
+# Add an approved complete JSON feed here after checking access and reuse terms.
+# [sources.directory]
+# url = "https://directory.example/export.json"
+# hosts = ["directory.example"]
+# minimum_rows = 1
+# reuse = "Record the applicable terms or written permission here"
+
+# [sources.venues]
+# format = "place-jsonld"
+# url = "https://directory.example/venues"
+# hosts = ["directory.example"]
+# minimum_rows = 5
+# reuse = "Record the applicable terms or written permission here"
+# categories = { BarOrPub = "pub", Restaurant = "restaurant" }

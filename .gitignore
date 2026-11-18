@@ -1,0 +1,7 @@
+commands
+venv/
+.venv/
+__pycache__/
+.env*
+.pgpass
+pg_service.conf
