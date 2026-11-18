@@ -1,33 +1,34 @@
 """Extract Schema.org place records from an approved directory's HTML."""
 
-from html.parser import HTMLParser
 import json
+from collections.abc import Iterator, Mapping
+from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 from crawler import ImportFailure
 
 
 class PlaceMarkup(HTMLParser):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.reading = False
-        self.blocks = []
+        self.blocks: list[str] = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "script" and dict(attrs).get("type") == "application/ld+json":
             self.reading = True
             self.blocks.append("")
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag == "script":
             self.reading = False
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self.reading:
             self.blocks[-1] += data
 
 
-def nodes(document):
+def nodes(document: object) -> Iterator[object]:
     if isinstance(document, list):
         yield from document
     elif isinstance(document, dict):
@@ -38,7 +39,7 @@ def nodes(document):
             yield document
 
 
-def extract(body, page, categories):
+def extract(body: bytes, page: str, categories: Mapping[str, str]) -> list[dict[str, object]]:
     parser = PlaceMarkup()
     try:
         parser.feed(body.decode("utf-8"))
@@ -46,7 +47,7 @@ def extract(body, page, categories):
         documents = [json.loads(block) for block in parser.blocks]
     except (ValueError, RecursionError):
         raise ImportFailure("invalid_place_markup") from None
-    records = []
+    records: list[dict[str, object]] = []
     for document in documents:
         for node in nodes(document):
             if not isinstance(node, dict):

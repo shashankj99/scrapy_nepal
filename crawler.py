@@ -1,15 +1,17 @@
 """Bounded HTTP fetching for configured public HTTPS sources."""
 
-from contextlib import closing
 import http.client
 import ipaddress
 import re
 import socket
 import ssl
 import time
-from urllib.parse import urljoin, urlsplit
+from collections.abc import Iterable
+from contextlib import closing
+from urllib.parse import SplitResult, urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
+SOCKET_TIMEOUT = 8
 AGENT = "NepalDatasetImporter"
 MAX_BYTES = 2 * 1024 * 1024
 REDIRECTS = {301, 302, 303, 307, 308}
@@ -18,13 +20,13 @@ REDIRECTS = {301, 302, 303, 307, 308}
 class ImportFailure(Exception):
     """A fixed error code that is safe to print and persist."""
 
-    def __init__(self, code, rejected=None):
+    def __init__(self, code: str, rejected: int | None = None) -> None:
         super().__init__(code)
         self.code = code
         self.rejected = rejected
 
 
-def public_url(url):
+def public_url(url: object) -> SplitResult:
     if not isinstance(url, str) or len(url) > 2048:
         raise ImportFailure("invalid_url")
     if any(ord(char) <= 32 or ord(char) >= 127 or char == "\\" for char in url):
@@ -46,20 +48,21 @@ def public_url(url):
 
 
 class PinnedHTTPS(http.client.HTTPSConnection):
-    def __init__(self, host, address):
-        super().__init__(host, timeout=8, context=ssl.create_default_context())
+    def __init__(self, host: str, address: str) -> None:
+        self.tls_context = ssl.create_default_context()
+        super().__init__(host, timeout=SOCKET_TIMEOUT, context=self.tls_context)
         self.address = address
 
-    def connect(self):
-        raw = socket.create_connection((self.address, 443), timeout=self.timeout)
+    def connect(self) -> None:
+        raw = socket.create_connection((self.address, 443), timeout=SOCKET_TIMEOUT)
         try:
-            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+            self.sock = self.tls_context.wrap_socket(raw, server_hostname=self.host)
         except BaseException:
             raw.close()
             raise
 
 
-def resolve(host):
+def resolve(host: str) -> str:
     addresses = [
         ipaddress.ip_address(item[4][0])
         for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
@@ -73,20 +76,20 @@ def resolve(host):
 
 
 class Fetcher:
-    def __init__(self, hosts):
+    def __init__(self, hosts: Iterable[str]) -> None:
         self.hosts = frozenset(hosts)
-        self.robots = {}
-        self.last_request = {}
+        self.robots: dict[str, RobotFileParser] = {}
+        self.last_request: dict[str, float] = {}
 
-    def fetch(self, url, *, robots=False):
+    def fetch(self, url: str, *, robots: bool = False) -> tuple[bytes, str]:
         for _ in range(4):
             parts = public_url(url)
             host = parts.hostname
-            if host not in self.hosts:
+            if host is None or host not in self.hosts:
                 raise ImportFailure("unapproved_host")
             if not robots:
-                self.check_robots(parts, url)
-            status, location, body = self.request(parts)
+                self.check_robots(host, url)
+            status, location, body = self.request(host, parts)
             if status in REDIRECTS and location:
                 url = urljoin(url, location)
                 continue
@@ -95,8 +98,7 @@ class Fetcher:
             raise ImportFailure("source_http_error")
         raise ImportFailure("too_many_redirects")
 
-    def check_robots(self, parts, url):
-        host = parts.hostname
+    def check_robots(self, host: str, url: str) -> None:
         if host not in self.robots:
             robots_url = f"https://{host}/robots.txt"
             rules = RobotFileParser(robots_url)
@@ -106,10 +108,10 @@ class Fetcher:
         if not self.robots[host].can_fetch(AGENT, url):
             raise ImportFailure("robots_disallowed")
 
-    def request(self, parts):
-        host = parts.hostname
+    def request(self, host: str, parts: SplitResult) -> tuple[int, str | None, bytes]:
         rules = self.robots.get(host)
-        delay = max(1, rules.crawl_delay(AGENT) or 0) if rules else 1
+        crawl_delay = rules.crawl_delay(AGENT) if rules is not None else None
+        delay = max(1, int(crawl_delay)) if crawl_delay is not None else 1
         if delay > 30:
             raise ImportFailure("crawl_delay_exceeds_limit")
         time.sleep(max(0, self.last_request.get(host, 0) + delay - time.monotonic()))
@@ -124,7 +126,8 @@ class Fetcher:
                 response = connection.getresponse()
                 if response.status != 200:
                     return response.status, response.getheader("Location"), b""
-                if response.getheader("Content-Encoding", "identity").lower() != "identity":
+                encoding = response.getheader("Content-Encoding")
+                if encoding is not None and encoding.lower() != "identity":
                     raise ImportFailure("unsupported_content_encoding")
                 expected = response.length
                 if expected is not None and expected > MAX_BYTES:

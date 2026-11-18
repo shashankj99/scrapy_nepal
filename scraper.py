@@ -1,22 +1,45 @@
 """Import configured place feeds into PostgreSQL."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
-from pathlib import Path
 import sys
-import tomllib
+from collections.abc import Set
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeAlias, TypedDict, cast
 from uuid import uuid4
 
-from crawler import Fetcher, ImportFailure, MAX_BYTES, public_url
+import tomllib
+
+from crawler import MAX_BYTES, Fetcher, ImportFailure, public_url
 from place_html import extract
+
+if TYPE_CHECKING:
+    from psycopg import Connection
+
+    DbConnection: TypeAlias = Connection[tuple[Any, ...]]
+
+
+class SourceConfig(TypedDict, total=False):
+    fixture: str
+    format: str
+    url: str
+    hosts: list[str]
+    minimum_rows: int
+    categories: dict[str, str]
+    reuse: str
+
+
+PlaceRows = dict[str, tuple[str, str, str, str]]
 
 ROOT = Path(__file__).resolve().parent
 FIELDS = ("id", "name", "category", "locality", "source_url")
 MAX_ROWS = 10_000
 
 
-def load_source(body, minimum_rows, hosts):
+def load_source(body: bytes, minimum_rows: int, hosts: Set[str]) -> PlaceRows:
     try:
         records = json.loads(body)
     except (ValueError, RecursionError):
@@ -24,29 +47,32 @@ def load_source(body, minimum_rows, hosts):
     return validate_records(records, minimum_rows, hosts)
 
 
-def validate_records(records, minimum_rows, hosts):
+def validate_records(records: object, minimum_rows: int, hosts: Set[str]) -> PlaceRows:
     if not isinstance(records, list) or not minimum_rows <= len(records) <= MAX_ROWS:
         raise ImportFailure("unexpected_record_count")
-    rows = {}
+    rows: PlaceRows = {}
     rejected = 0
     for record in records:
         try:
             if not isinstance(record, dict):
                 raise ImportFailure("invalid_record")
-            values = tuple(record.get(field) for field in FIELDS)
-            if any(
-                not isinstance(value, str)
-                or not value.strip()
-                or len(value) > (2048 if field in {"id", "source_url"} else 300)
-                or any(ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF for char in value)
-                for field, value in zip(FIELDS, values)
-            ):
+            fields: list[str] = []
+            for field in FIELDS:
+                value = record.get(field)
+                limit = 2048 if field in {"id", "source_url"} else 300
+                if (
+                    not isinstance(value, str)
+                    or not value.strip()
+                    or len(value) > limit
+                    or any(ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF for char in value)
+                ):
+                    raise ImportFailure("invalid_record")
+                fields.append(value.strip())
+            key, name, category, locality, source_url = fields
+            url = public_url(source_url)
+            if key in rows or url.hostname is None or url.hostname not in hosts or url.query:
                 raise ImportFailure("invalid_record")
-            key, *fields = (value.strip() for value in values)
-            url = public_url(fields[-1])
-            if key in rows or url.hostname not in hosts or url.query:
-                raise ImportFailure("invalid_record")
-            rows[key] = tuple(fields)
+            rows[key] = (name, category, locality, source_url)
         except ImportFailure:
             rejected += 1
     if rejected:
@@ -54,7 +80,9 @@ def validate_records(records, minimum_rows, hosts):
     return rows
 
 
-def collect(source):
+def collect(source: SourceConfig) -> PlaceRows:
+    final_url = None
+    hosts: Set[str]
     if "fixture" in source:
         if source.get("format", "json") != "json":
             raise ImportFailure("unknown_fixture_format")
@@ -62,6 +90,8 @@ def collect(source):
             body = fixture.read(MAX_BYTES + 1)
         hosts = {"example.com"}
     else:
+        if "hosts" not in source or "url" not in source:
+            raise ImportFailure("missing_source_endpoint")
         hosts = frozenset(source["hosts"])
         body, final_url = Fetcher(hosts).fetch(source["url"])
     if len(body) > MAX_BYTES:
@@ -72,13 +102,15 @@ def collect(source):
     source_format = source.get("format", "json")
     if source_format == "json":
         return load_source(body, minimum_rows, hosts)
-    if source_format == "place-jsonld":
+    if source_format == "place-jsonld" and final_url is not None:
+        if "categories" not in source:
+            raise ImportFailure("missing_source_categories")
         records = extract(body, final_url, source["categories"])
         return validate_records(records, minimum_rows, hosts)
     raise ImportFailure("unknown_source_format")
 
 
-def connect():
+def connect() -> DbConnection:
     try:
         import psycopg
     except ImportError:
@@ -103,7 +135,7 @@ def connect():
     )
 
 
-def save(conn, source_id, rows):
+def save(conn: DbConnection, source_id: str, rows: PlaceRows) -> tuple[int, int, int]:
     existing = dict(
         (key, (name, category, locality, url))
         for key, name, category, locality, url in conn.execute(
@@ -136,12 +168,14 @@ def save(conn, source_id, rows):
     return inserted, updated, len(rows) - inserted - updated
 
 
-def import_rows(conn, source_id, source):
-    locked, = conn.execute(
+def import_rows(conn: DbConnection, source_id: str, source: SourceConfig) -> dict[str, int | str]:
+    lock_row = conn.execute(
         "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
         (f"ingest:{source_id}",),
     ).fetchone()
-    if not locked:
+    if lock_row is None:
+        raise ImportFailure("lock_result_missing")
+    if not lock_row[0]:
         raise ImportFailure("source_already_running")
     run_id = uuid4()
     with conn.transaction():
@@ -176,10 +210,16 @@ def import_rows(conn, source_id, source):
             (failure.code, failure.rejected, run_id),
         )
         raise failure from None
-    return dict(zip(("inserted", "updated", "unchanged"), counts), run_id=str(run_id))
+    inserted, updated, unchanged = counts
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "run_id": str(run_id),
+    }
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(prog="scraper")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("sources")
@@ -191,7 +231,8 @@ def main():
     history.add_argument("--source", required=True)
     args = parser.parse_args()
     try:
-        sources = tomllib.loads((ROOT / "sources.toml").read_text(encoding="utf-8"))["sources"]
+        settings = tomllib.loads((ROOT / "sources.toml").read_text(encoding="utf-8"))
+        sources = cast(dict[str, SourceConfig], settings["sources"])
         if args.command == "sources":
             print(json.dumps({key: "fixture" if "fixture" in item else "https"
                               for key, item in sources.items()}))
@@ -207,6 +248,7 @@ def main():
                 return 0
             if "fixture" in source and not args.allow_fixture_write:
                 raise ImportFailure("fixture_write_requires_explicit_flag")
+        result: dict[str, int | str] | list[dict[str, Any]]
         with connect() as conn:
             if args.command == "run":
                 result = import_rows(conn, args.source, source)
@@ -218,8 +260,10 @@ def main():
                         "WHERE source_id = %s ORDER BY started_at DESC LIMIT 20",
                         (args.source,),
                     )
+                    if cursor.description is None:
+                        raise ImportFailure("run_history_missing")
                     columns = [column.name for column in cursor.description]
-                    result = [dict(zip(columns, row)) for row in cursor]
+                    result = [dict(zip(columns, row, strict=True)) for row in cursor]
             print(json.dumps(result, default=str))
         return 0
     except ImportFailure as error:
