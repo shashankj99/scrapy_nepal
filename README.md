@@ -47,16 +47,19 @@ CREATE ROLE scraper_reader LOGIN;
 
 Run these commands from the project directory so `psql` can find the migration files. The migrations grant the writer access to the ingestion tables and give the reader access to `ingest.places`. For a managed database, have your administrator provision the roles and run the same two SQL files in order.
 
-Set the connection details in your shell. This example uses a local PostgreSQL Unix socket. Replace `/tmp` if your server puts its socket elsewhere.
+Create a private `.env` file in the project directory. If you already have one, edit it directly.
 
 ```sh
-export PGHOST=/tmp
-export PGPORT=5432
-export PGDATABASE=scraper_dev
-export PGUSER=scraper_writer
+test -e .env || install -m 600 .env.example .env
+chmod 600 .env
+nano .env
 ```
 
-If your server requires password authentication, create a password file outside the repository, restrict it to mode `0600`, and set `PGPASSFILE` to its path. Enter the real password in the file using an editor or provision it through your secret store. The file format is `host:port:database:user:password`. Use the same connection details as above. For a remote database, set `PGHOST` to the server’s DNS name and `PGSSLROOTCERT` to the trusted CA file. The CLI verifies the remote certificate and hostname. Keep credentials out of shell commands, project files, and logs.
+Set `PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` using your own connection details. For passwords containing spaces or `#`, use single quotes. Escape literal backslashes and single quotes inside a single-quoted value. `PGHOST=/tmp` uses a local PostgreSQL Unix socket. For a remote database, use its DNS name and set `PGSSLROOTCERT` to the trusted CA file path. TCP connections use verified TLS by default. If a local PostgreSQL server has no TLS, set `PGHOST=localhost` and `PGSSLMODE=disable`. The CLI allows that setting only on loopback.
+
+The CLI reads the project’s `.env` automatically for database commands. Existing environment variables take precedence. The file is ignored by Git. You can also leave `PGPASSWORD` blank and use your existing PostgreSQL password file or set `PGPASSFILE` to a protected file. For scheduled jobs, you can keep using environment variables or a password file provisioned through your secret store.
+
+Check connectivity with `./venv/bin/python scraper.py runs --source demo`. An empty JSON array means the connection and run-history query worked and there are no demo runs yet.
 
 ## 3. Verify a database write
 
@@ -72,29 +75,36 @@ On a fresh database, the first run reports `inserted: 1`. The second reports `un
 
 ## 4. Run a real source
 
-Only `demo` ships enabled. To import real data, uncomment and adapt one of the examples in [sources.toml](sources.toml). Replace the example URL and host, set a credible minimum row count, and record the applicable access and reuse terms.
-
-- **JSON feed** uses an array with the fields shown in [the demo fixture](fixtures/places.json). Each item needs a stable ID.
-- **HTML directory** uses `format = "place-jsonld"` and a mapping from Schema.org types to categories. The built-in parser reads a single page with object, array, or top-level `@graph` JSON-LD. Other markup, pagination, and JavaScript-rendered sources require an adapter.
-
-For a source configured under `[sources.directory]`, run:
+The project comes with live OpenStreetMap sources for 13 destination areas. Run these commands from the project directory:
 
 ```sh
 ./venv/bin/python scraper.py sources
-./venv/bin/python scraper.py run directory --dry-run
-./venv/bin/python scraper.py run directory
-./venv/bin/python scraper.py runs --source directory
+./venv/bin/python scraper.py run osm-kathmandu-valley --dry-run
+./venv/bin/python scraper.py run osm-pokhara --dry-run
 ```
 
-Only run the write command after the dry run returns the expected count. The crawler uses HTTPS, honors crawler rules, throttles requests, and checks redirect destinations. Schedule the same write command with absolute paths if you later use cron. Set a job deadline and capture the exit status.
+The CLI discovers mapped listings from the configured region on each run. Dry runs need internet access and work without PostgreSQL. Once PostgreSQL is configured and the dry run succeeds, import the source you want:
+
+```sh
+./venv/bin/python scraper.py run osm-kathmandu-valley
+./venv/bin/python scraper.py runs --source osm-kathmandu-valley
+```
+
+Use the source ID listed by `sources` for other regions. Public Overpass is a shared service. Run refreshes infrequently and avoid launching multiple regions in parallel. If a dry run returns a source connection or HTTP error, the service may be busy. Wait before retrying.
+
+Read the [tourist question inventory](TOURISM_COVERAGE.md) for data coverage and gaps. Display **© OpenStreetMap contributors** with a link to the [OSM license page](https://www.openstreetmap.org/copyright) wherever the consuming app uses the data. The data is available under the ODbL. Review its share-alike terms when distributing an adapted database.
+
+For another approved JSON feed or single-page HTML directory with place JSON-LD, adapt the commented templates in [sources.toml](sources.toml). The [demo fixture](fixtures/places.json) shows the JSON input format. Sources requiring pagination or JavaScript rendering need a separate adapter. Schedule successful imports using absolute paths and a job deadline.
 
 ## Troubleshooting
 
 | What you see | What to check |
 |---|---|
 | `install_database_dependencies` | Install `requirements.txt` using `./venv/bin/python -m pip`. |
-| `missing_database_configuration` | Set `PGHOST`, `PGDATABASE`, and `PGUSER` in the terminal running the CLI. |
-| `operation_failed` | The CLI hides underlying error details. Check that PostgreSQL is running, the migrations ran in the target database, and the connection settings, password file, and remote CA are correct. |
+| `missing_database_configuration` | Set `PGHOST`, `PGDATABASE`, and `PGUSER` in `.env` or in the environment running the CLI. |
+| `database_server_has_no_tls` | For loopback only, use `PGSSLMODE=disable`. For remote PostgreSQL, configure TLS on the server. |
+| `database_schema_missing` | Have the database administrator apply the two migrations from step 2 to the database in `PGDATABASE`. |
+| `database_connection_failed` or `operation_failed` | The CLI hides underlying error details. Check that PostgreSQL is running, the migrations ran in the target database, and the connection settings, password file, and remote CA are correct. |
 | `unknown_source` | Run `sources` and use the ID listed there. |
 | `unexpected_record_count` | Compare the source output with its configured `minimum_rows` and check that it still returns the expected data. |
 

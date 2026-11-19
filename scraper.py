@@ -13,7 +13,8 @@ from uuid import uuid4
 
 import tomllib
 
-from crawler import MAX_BYTES, Fetcher, ImportFailure, public_url
+from crawler import MAX_BYTES, SOCKET_TIMEOUT, Fetcher, ImportFailure, public_url
+from osm_places import OSM_HOST, extract_osm, query_url
 from place_html import extract
 
 if TYPE_CHECKING:
@@ -29,6 +30,8 @@ class SourceConfig(TypedDict, total=False):
     hosts: list[str]
     minimum_rows: object
     categories: dict[str, str]
+    bounds: list[float]
+    locality: str
     reuse: str
 
 
@@ -86,9 +89,10 @@ def validate_records(records: object, minimum_rows: int, hosts: Set[str]) -> Pla
 
 def collect(source: SourceConfig) -> PlaceRows:
     final_url = None
+    source_format = source.get("format", "json")
     hosts: Set[str]
     if "fixture" in source:
-        if source.get("format", "json") != "json":
+        if source_format != "json":
             raise ImportFailure("unknown_fixture_format")
         with (ROOT / source["fixture"]).open("rb") as fixture:
             body = fixture.read(MAX_BYTES + 1)
@@ -97,13 +101,20 @@ def collect(source: SourceConfig) -> PlaceRows:
         if "hosts" not in source or "url" not in source:
             raise ImportFailure("missing_source_endpoint")
         hosts = frozenset(source["hosts"])
-        body, final_url = Fetcher(hosts).fetch(source["url"])
+        url = source["url"]
+        if source_format == "osm-overpass":
+            if "bounds" not in source or "locality" not in source:
+                raise ImportFailure("missing_osm_region")
+            url = query_url(url, source["bounds"])
+        timeout = 25 if source_format == "osm-overpass" else SOCKET_TIMEOUT
+        body, final_url = Fetcher(hosts, timeout=timeout).fetch(url)
     if len(body) > MAX_BYTES:
         raise ImportFailure("source_too_large")
     minimum_rows = source.get("minimum_rows", 1)
     if not isinstance(minimum_rows, int) or not 1 <= minimum_rows <= MAX_ROWS:
         raise ImportFailure("invalid_minimum_rows")
-    source_format = source.get("format", "json")
+    if source_format == "osm-overpass" and "locality" in source:
+        return validate_records(extract_osm(body, source["locality"]), minimum_rows, {OSM_HOST})
     if source_format == "json":
         return load_source(body, minimum_rows, hosts)
     if source_format == "place-jsonld" and final_url is not None:
@@ -117,26 +128,56 @@ def collect(source: SourceConfig) -> PlaceRows:
 def connect() -> DbConnection:
     try:
         import psycopg
+        from dotenv import dotenv_values
     except ImportError:
         raise ImportFailure("install_database_dependencies") from None
-    required = ("PGHOST", "PGDATABASE", "PGUSER")
-    if any(not os.environ.get(name) for name in required):
+
+    file_settings = dotenv_values(ROOT / ".env", interpolate=False)
+    settings = {**file_settings, **os.environ}
+    host = settings.get("PGHOST")
+    database = settings.get("PGDATABASE")
+    user = settings.get("PGUSER")
+    if not host or not database or not user:
         raise ImportFailure("missing_database_configuration")
-    host = os.environ["PGHOST"]
     if "," in host or (not host.startswith("/") and "/" in host):
         raise ImportFailure("invalid_database_host")
-    return psycopg.connect(
-        host=host,
-        hostaddr="",
-        dbname=os.environ["PGDATABASE"],
-        user=os.environ["PGUSER"],
-        port=os.environ.get("PGPORT", "5432"),
-        sslmode="verify-full",
-        gssencmode="disable",
-        connect_timeout=5,
-        options="-c statement_timeout=30000 -c lock_timeout=5000 -c search_path=pg_catalog",
-        autocommit=True,
-    )
+
+    sslmode = settings.get("PGSSLMODE") or "verify-full"
+    hostaddr = ""
+    if sslmode == "disable":
+        if host not in {"localhost", "127.0.0.1", "::1"}:
+            raise ImportFailure("unencrypted_database_requires_loopback")
+        hostaddr = "127.0.0.1" if host == "localhost" else host
+    elif sslmode != "verify-full":
+        raise ImportFailure("unsupported_database_sslmode")
+
+    credentials = {
+        argument: value
+        for argument, key in (
+            ("password", "PGPASSWORD"),
+            ("passfile", "PGPASSFILE"),
+            ("sslrootcert", "PGSSLROOTCERT"),
+        )
+        if (value := settings.get(key))
+    }
+    try:
+        return psycopg.connect(
+            host=host,
+            hostaddr=hostaddr,
+            dbname=database,
+            user=user,
+            port=settings.get("PGPORT") or "5432",
+            sslmode=sslmode,
+            gssencmode="disable",
+            connect_timeout=5,
+            options="-c statement_timeout=30000 -c lock_timeout=5000 -c search_path=pg_catalog",
+            autocommit=True,
+            **credentials,
+        )
+    except psycopg.OperationalError as error:
+        if "server does not support SSL" in str(error):
+            raise ImportFailure("database_server_has_no_tls") from None
+        raise ImportFailure("database_connection_failed") from None
 
 
 def save(conn: DbConnection, source_id: str, rows: PlaceRows) -> tuple[int, int, int]:
@@ -276,7 +317,10 @@ def main() -> int:
     except KeyboardInterrupt:
         print('{"error":"interrupted"}', file=sys.stderr)
         return 130
-    except Exception:
+    except Exception as error:
+        if getattr(error, "sqlstate", None) in {"42P01", "3F000"}:
+            print('{"error":"database_schema_missing"}', file=sys.stderr)
+            return 1
         # Driver and network exceptions may contain credential or source details.
         print('{"error":"operation_failed"}', file=sys.stderr)
         return 1

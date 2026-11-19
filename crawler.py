@@ -48,13 +48,14 @@ def public_url(url: object) -> SplitResult:
 
 
 class PinnedHTTPS(http.client.HTTPSConnection):
-    def __init__(self, host: str, address: str) -> None:
+    def __init__(self, host: str, address: str, timeout: float) -> None:
         self.tls_context = ssl.create_default_context()
-        super().__init__(host, timeout=SOCKET_TIMEOUT, context=self.tls_context)
+        super().__init__(host, timeout=timeout, context=self.tls_context)
+        self.socket_timeout = timeout
         self.address = address
 
     def connect(self) -> None:
-        raw = socket.create_connection((self.address, 443), timeout=SOCKET_TIMEOUT)
+        raw = socket.create_connection((self.address, 443), timeout=self.socket_timeout)
         try:
             self.sock = self.tls_context.wrap_socket(raw, server_hostname=self.host)
         except BaseException:
@@ -76,8 +77,9 @@ def resolve(host: str) -> str:
 
 
 class Fetcher:
-    def __init__(self, hosts: Iterable[str]) -> None:
+    def __init__(self, hosts: Iterable[str], *, timeout: float = SOCKET_TIMEOUT) -> None:
         self.hosts = frozenset(hosts)
+        self.timeout = timeout
         self.robots: dict[str, RobotFileParser] = {}
         self.last_request: dict[str, float] = {}
 
@@ -120,7 +122,7 @@ class Fetcher:
         if parts.query:
             target += "?" + parts.query
         try:
-            connection = PinnedHTTPS(host, resolve(host))
+            connection = PinnedHTTPS(host, resolve(host), self.timeout)
             with closing(connection):
                 connection.request("GET", target, headers={"User-Agent": AGENT})
                 response = connection.getresponse()

@@ -15,3 +15,109 @@ fixture = "fixtures/places.json"
 # minimum_rows = 5
 # reuse = "Record the applicable terms or written permission here"
 # categories = { BarOrPub = "pub", Restaurant = "restaurant" }
+
+# Built-in regional listings. Locality names describe the approximate query area.
+
+[sources.osm-kathmandu-valley]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [27.58, 85.21, 27.81, 85.52]
+locality = "Kathmandu Valley"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-pokhara]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [28.13, 83.88, 28.3, 84.05]
+locality = "Pokhara"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-chitwan-sauraha]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [27.39, 84.19, 27.72, 84.59]
+locality = "Chitwan and Sauraha"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-lumbini]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [27.44, 83.22, 27.52, 83.32]
+locality = "Lumbini"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-bandipur]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [27.9, 84.32, 27.97, 84.41]
+locality = "Bandipur"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-everest]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [27.67, 86.62, 28.03, 86.98]
+locality = "Everest and Khumbu"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-mustang]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [28.73, 83.55, 29.23, 84.05]
+locality = "Jomsom and Upper Mustang"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-annapurna]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [28.31, 83.57, 28.85, 84.36]
+locality = "Annapurna Highlands"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-langtang]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [28.07, 85.25, 28.3, 85.68]
+locality = "Langtang"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-bardiya]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [28.36, 81.17, 28.65, 81.62]
+locality = "Bardiya and Thakurdwara"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-janakpur]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [26.67, 85.88, 26.79, 86.01]
+locality = "Janakpur"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-ilam]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [26.85, 87.89, 27.0, 88.12]
+locality = "Ilam and Kanyam"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
+
+[sources.osm-rara]
+format = "osm-overpass"
+url = "https://overpass.private.coffee/api/interpreter"
+hosts = ["overpass.private.coffee"]
+bounds = [29.46, 81.97, 29.61, 82.18]
+locality = "Rara Lake"
+reuse = "© OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright"
