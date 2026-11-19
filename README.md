@@ -42,10 +42,11 @@ CREATE ROLE scraper_reader LOGIN;
 \set ON_ERROR_STOP on
 \i migrations/001_initial.sql
 \i migrations/grants.sql
+\i migrations/002_place_details.sql
 \quit
 ```
 
-Run these commands from the project directory so `psql` can find the migration files. The migrations grant the writer access to the ingestion tables and give the reader access to `ingest.places`. For a managed database, have your administrator provision the roles and run the same two SQL files in order.
+Run these commands from the project directory so `psql` can find the migration files. The migrations grant the writer access to the ingestion tables and give the reader access to `ingest.places`. For a managed database, have your administrator provision the roles and run the same SQL files in order.
 
 Create a private `.env` file in the project directory. If you already have one, edit it directly.
 
@@ -103,7 +104,7 @@ For another approved JSON feed or single-page HTML directory with place JSON-LD,
 | `install_database_dependencies` | Install `requirements.txt` using `./venv/bin/python -m pip`. |
 | `missing_database_configuration` | Set `PGHOST`, `PGDATABASE`, and `PGUSER` in `.env` or in the environment running the CLI. |
 | `database_server_has_no_tls` | For loopback only, use `PGSSLMODE=disable`. For remote PostgreSQL, configure TLS on the server. |
-| `database_schema_missing` | Have the database administrator apply the two migrations from step 2 to the database in `PGDATABASE`. |
+| `database_schema_missing` | Have the database administrator apply the migrations from step 2 to the database in `PGDATABASE`. |
 | `database_connection_failed` or `operation_failed` | The CLI hides underlying error details. Check that PostgreSQL is running, the migrations ran in the target database, and the connection settings, password file, and remote CA are correct. |
 | `unknown_source` | Run `sources` and use the ID listed there. |
 | `unexpected_record_count` | Compare the source output with its configured `minimum_rows` and check that it still returns the expected data. |
